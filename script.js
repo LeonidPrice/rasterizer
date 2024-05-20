@@ -1152,11 +1152,22 @@ class Polygon {
  * Model representation
  * @param {Vertex[]} vertices - array of the vertices.
  * @param {Triangle[]} triangles - array of the triangles.
+ * @param {Number} boundsCenter - center of the model.
+ * @param {Number} boundsRadius - radius from center to point.
  */
 class Model {
-    constructor(vertices, polygons) {
+    constructor(vertices, polygons, boundsCenter, boundsRadius) {
         this.vertices = vertices;
         this.triangles = polygons;
+        this.boundsCenter = boundsCenter;
+        this.boundsRadius = boundsRadius;
+    }
+}
+
+class Plane {
+    constructor (normal, distance) {
+        this.normal = normal;
+        this.distanse = distance;
     }
 }
 
@@ -1184,6 +1195,7 @@ class Camera {
     constructor(position, orientation) {
         this.position = position;
         this.orientation = orientation;
+        this.clippinngPlanes = [];
     }
 }
 
@@ -1521,18 +1533,87 @@ class Mesh {
         }
         return [vertices, triangles];
     }
-}
 
+    static Disc(innerDiameter, outerDiameter, discSegments, rotationSegments) {
+        var outerRadius = outerDiameter/2;
+        var innerRadius = innerDiameter/2;
+        var currentRadius = outerRadius/discSegments;
+        var radiusStep = (outerRadius - innerRadius) / discSegments;
+        var vertices = [];
+        var triangles = [];
+
+        if (innerDiameter == 0) {
+            vertices.push(new Vertex(epsilon, epsilon, epsilon));
+            for (var i = 0; i < discSegments; i++) {
+                for (var j = 0; j < rotationSegments; j++) {
+                    var angle = 360/rotationSegments*j*(Math.PI/180);
+                    vertices.push(new Vertex(
+                        currentRadius*(i+1)*Math.cos(angle),
+                        currentRadius*(i+1)*Math.sin(angle),
+                        epsilon
+                    ))
+                }
+            }
+
+            for (var i = 0; i < rotationSegments; i++) {
+                if (i == rotationSegments-1) {
+                    triangles.push(new Triangle(0,i+1,1));
+                } else {
+                    triangles.push(new Triangle(0,i+1,i+2));
+                }
+            }
+    
+            if (discSegments == 1) {return [vertices, triangles];}
+    
+            for (var i = 0; i < discSegments - 1; i++) {
+                for (var j = 0; j < rotationSegments; j++) {
+                    var currentIndex = i * rotationSegments + j + 1;    
+                    var nextIndex = currentIndex + rotationSegments;
+                    var currentShift = (j + 1) % rotationSegments + i * rotationSegments + 1;
+                    var nextShift = currentShift + rotationSegments;
+                    triangles.push(new Triangle(currentIndex, nextIndex, currentShift));
+                    triangles.push(new Triangle(currentShift, nextIndex, nextShift));
+                }
+            }
+        } else {
+            for (var i = 0; i <= discSegments; i++) {
+                var currentRadius = innerRadius + i * radiusStep;
+                for (var j = 0; j < rotationSegments; j++) {
+                    var angle = (360 / rotationSegments * j) * Math.PI / 180;
+                    vertices.push(new Vertex(
+                        currentRadius * Math.cos(angle),
+                        currentRadius * Math.sin(angle),
+                        0
+                    ));
+                }
+            }
+
+            for (var i = 0; i < discSegments; i++) {
+                for (var j = 0; j < rotationSegments; j++) {
+                    var currentIndex = i * rotationSegments + j;
+                    var nextIndex = currentIndex + rotationSegments;
+                    var currentShift = (j + 1) % rotationSegments + i * rotationSegments;
+                    var nextShift = currentShift + rotationSegments;
+                    triangles.push(new Triangle(currentIndex, nextIndex, currentShift));
+                    triangles.push(new Triangle(currentShift, nextIndex, nextShift));
+                }
+            }
+        }
+
+        return [vertices, triangles];
+    }
+
+}
 
 var canvas = new Canvas(document.getElementById('Canvas'));
 var render = new Render(canvas);
-var camera = new Camera(new Vertex(0,0,-15), Matrix.Rotation(0,0,0))
+var camera = new Camera(new Vertex(0,0,-100), Matrix.Rotation(0,0,0))
 
 var cubeMesh = Mesh.Cube(4,4,2,[255,0,0,255]);
 var cube = new Instance(new Model(cubeMesh[0],cubeMesh[1]), new Vertex(-4,3,0), Matrix.Rotation(0,20,90), Matrix.Scale(1,1,1));
 
 var icosahedronMesh = Mesh.Icosahedron(1, [0,0,0,255]);
-var icosahedron = new Instance(new Model(icosahedronMesh[0],icosahedronMesh[1]), new Vertex(4,3,0), Matrix.Rotation(0,0,50), Matrix.Scale(1,1,1));
+var icosahedron = new Instance(new Model(icosahedronMesh[0],icosahedronMesh[1]), new Vertex(0,0,0), Matrix.Rotation(0,0,0), Matrix.Scale(1,1,1));
 
 var planeMesh = Mesh.Plane(4,4,10,10, [255,0,0,255]);
 var planeXY = new Instance(new Model(planeMesh[0],planeMesh[1]), new Vertex(-4,-3,0), Matrix.Rotation(0,20,0), Matrix.Scale(1,1,1));
@@ -1540,12 +1621,15 @@ var planeXY = new Instance(new Model(planeMesh[0],planeMesh[1]), new Vertex(-4,-
 var starMesh = Mesh.Star(5,2,5,0.5,0.5);
 var star = new Instance(new Model(starMesh[0],starMesh[1]), new Vertex(4,-3,0), Matrix.Rotation(0,20,180), Matrix.Scale(1,1,1));
 
+var discMesh = Mesh.Disc(60,90,4,32);
+var disc = new Instance(new Model(discMesh[0],discMesh[1]), new Vertex(0,0,0), Matrix.Rotation(0,0,0), Matrix.Scale(1,1,1));
 
 var instances = [
-    cube,
-    icosahedron,
-    planeXY,
-    star
+    disc
+    //icosahedron,
+    // cube,
+    // planeXY,
+    // star
 ]
 
 function RENDER() {
@@ -1562,10 +1646,7 @@ function animate() {
     ax += 1;
     ay += 1;
     az += 1;
-    instances[0].transform = Matrix.Rotation(ax+90,ay,az);
-    instances[1].transform = Matrix.Rotation(ax,ay+90,az);
-    instances[2].transform = Matrix.Rotation(ax,ay,az+90);
-    instances[3].transform = Matrix.Rotation(ax,ay,az+90);
+    instances[0].transform = Matrix.Rotation(ax,ay,az);
     RENDER();
     requestAnimationFrame(animate);
 }
